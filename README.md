@@ -22,6 +22,18 @@ These runbooks pin the working stack and document the fix for every error string
 | Wan 2.2 (TI2V 5B) | Apache-2.0 | Validated | [runbooks/wan-2.2.md](runbooks/wan-2.2.md) |
 | HunyuanVideo 1.5 (480p T2V) | Tencent Community | Validated | [runbooks/hunyuan-1.5.md](runbooks/hunyuan-1.5.md) |
 
+## Benchmarks
+
+All three models timed on the **same GPU** (H100 NVL 94 GB), then normalized by clip length and resolution so they're actually comparable — raw "seconds per clip" isn't, because each model ships a different default recipe:
+
+| Model | Pixel throughput (MP/s) | Cost per second of video | VRAM peak |
+|---|---|---|---|
+| LTX-2.3 | **1.78** (1.00x) | **$0.0040** | 50-55 GB |
+| Wan 2.2 | 0.61 (0.34x) | $0.0079 | ~34 GB |
+| HunyuanVideo 1.5 | 0.32 (0.18x) | $0.0236 | ~36 GB |
+
+Full methodology, raw numbers, and the honest caveats (single-run; Wan runs 40 un-distilled steps vs 8 for the others) live in **[benchmarks/BENCHMARKS.md](benchmarks/BENCHMARKS.md)**. Regenerate the normalized table from the raw data with `python3 benchmarks/plot.py`.
+
 ## Quick start
 
 1. Get a [RunPod](https://www.runpod.io/) account and an API key. Export it:
@@ -43,6 +55,7 @@ These runbooks pin the working stack and document the fix for every error string
 ```
 runbooks/    # one markdown runbook per model
 scripts/     # bootstrap + helper scripts referenced by the runbooks
+benchmarks/  # cross-model throughput + cost numbers, with a script to regenerate them
 ```
 
 ## Contributing
