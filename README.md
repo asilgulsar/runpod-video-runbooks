@@ -34,6 +34,10 @@ All three models timed on the **same GPU** (H100 NVL 94 GB), then normalized by 
 
 Full methodology, raw numbers, and the honest caveats (single-run; Wan runs 40 un-distilled steps vs 8 for the others) live in **[benchmarks/BENCHMARKS.md](benchmarks/BENCHMARKS.md)**. Regenerate the normalized table from the raw data with `python3 benchmarks/plot.py`.
 
+## Research
+
+**[RESEARCH.md](RESEARCH.md)** is a working note on making these three models faster, cheaper, and fit bigger — a mid-2026 scan of quantization, memory, and speed/quality techniques mapped to each model, with a per-model playbook, an honest "don't chase these" list, and a costed experiment plan. The headline: Wan 2.2's 40 un-distilled steps are the biggest single optimization target; the other two are already step-distilled, so their wins come from FP8 casting, attention backends, and inference caching.
+
 ## Quick start
 
 1. Get a [RunPod](https://www.runpod.io/) account and an API key. Export it:
