@@ -19,7 +19,7 @@ These runbooks pin the working stack and document the fix for every error string
 | Model | License | Status | Runbook |
 |---|---|---|---|
 | LTX-2.3 (22B distilled) | Open weights | Validated | [runbooks/ltx-2.3.md](runbooks/ltx-2.3.md) |
-| Wan 2.2 (TI2V 5B) | Apache-2.0 | Planned | _coming soon_ |
+| Wan 2.2 (TI2V 5B) | Apache-2.0 | Validated | [runbooks/wan-2.2.md](runbooks/wan-2.2.md) |
 | HunyuanVideo 1.5 (480p T2V) | Open weights | Planned | _coming soon_ |
 
 ## Quick start
