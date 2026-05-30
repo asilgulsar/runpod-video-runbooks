@@ -1,0 +1,20 @@
+# Model weights and outputs (never commit these)
+models/
+outputs/
+*.safetensors
+*.mp4
+*.png
+
+# Secrets / local env
+.env
+*.pem
+id_ed25519*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
