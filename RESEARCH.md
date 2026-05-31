@@ -8,7 +8,7 @@ A working research note on optimizing the three models in this repo — **LTX-2.
 
 ## The thesis in one paragraph
 
-The single biggest lever in the whole study is **cutting Wan 2.2 from its 40 un-distilled steps to 8** with a step-distillation LoRA — that also drops classifier-free guidance (another ~2x), turning a ~53s clip into roughly 6-10s. Nothing else here is close. The other two models are *already* step- and CFG-distilled (8 steps each), so for them the wins are smaller and stack-able: **FP8 weight casting** (~50% transformer VRAM, near-free), **SageAttention-FP8** (one line on the H100's SM90), **inference caching** (TeaCache ~2x), **torch.compile** (~1.5x), and — for HunyuanVideo specifically — **VAE tiling** to break its 5-second OOM ceiling. Distill first (it shrinks the base everything else multiplies against), then cache/attention/compile on top.
+The single biggest lever in the whole study is **cutting Wan 2.2 from its 40 un-distilled steps to 4-8** with distilled few-step weights — that also drops classifier-free guidance (another ~2x). **Measured here: 46.6s → 8.0s warm render, ~5.8x at identical VRAM** ([Tier A](#tier-a--measured-done)). Nothing else here is close. The other two models are *already* step- and CFG-distilled (8 steps each), so for them the wins are smaller and stack-able: **FP8 weight casting** (~50% transformer VRAM, near-free), **SageAttention-FP8** (one line on the H100's SM90), **inference caching** (TeaCache ~2x), **torch.compile** (~1.5x), and — for HunyuanVideo specifically — **VAE tiling** to break its 5-second OOM ceiling. Distill first (it shrinks the base everything else multiplies against), then cache/attention/compile on top.
 
 ---
 
@@ -25,14 +25,14 @@ Already 8-step and CFG-free, so there's **no distillation or caching headroom**.
 
 ### Wan 2.2 (TI2V 5B, diffusers `WanPipeline`, 40 steps)
 This is where the money is.
-1. **Step + CFG distillation (do this first).** Load a `Wan2.2-Lightning` / `lightx2v` distill LoRA → run **8 steps (4 high-noise + 4 low-noise expert), CFG=1**, Euler, shift≈5. Expect ~53s → ~6-10s/clip. **Use 8 steps, not 4** — pure 4-step loses motion (well-documented). LoRA strength ~0.6-0.8 high / 1.0 low.
+1. **Step + CFG distillation (do this first). ✅ Measured here — and a sourcing correction.** The popular `Wan2.2-Lightning` / `lightx2v` step-distill LoRAs are **14B-only** (hidden dim 5120, built around the A14B model's high/low-noise *expert* split) — they **do not fit TI2V-5B** (single dense transformer, hidden dim 3072) and throw a state_dict shape mismatch on load. For the 5B the working path is a **full transformer swap** to `yetter-ai/Wan2.2-TI2V-5B-Turbo-Diffusers`, run at **8 steps, guidance=1.0** (no expert split — the 5B is one transformer). **Measured: 40-step 46.6s → 8-step 9.6s (4.9x) / 4-step 8.0s (5.8x)** at identical 832×480×81f and 34 GB ([Tier A](#tier-a--measured-done)). **Use 8 steps, not 4** — 4-step saves only ~1.6s (fixed VAE/text-encode overhead dominates at low step counts) and loses motion.
 2. **Then stack on the smaller base:** `set_attention_backend("sage")` for SageAttention-FP8 (H100/SM90 only — the A100 falls back to INT8), `torch.compile` (~1.5x, lock your resolution to avoid recompiles), and FP8 layerwise casting for VRAM headroom. On Hopper, **torchao fp8-dynamic + compile** is the one path that buys VRAM *and* speed together.
 3. **Free orthogonal win:** quantize the T5 text encoder to FP8 — zero impact on video quality.
 4. **Gotchas:** diffusers' native FirstBlockCache **errors on Wan 2.2** (issue #12012) — use standalone **TeaCache** instead; GGUF-from-diffusers is **broken** for Wan 2.2 (meta-tensor, #12009); there's a reported tiled-VAE-decode bug (#125).
 
 ### HunyuanVideo 1.5 (8.3B distilled, diffusers `HunyuanVideo15Pipeline`)
 Already 8-step distilled and uses `pipe.guider`, so its problem is **VRAM/OOM, not speed** — specifically the VAE decode (~51 GB spike on top of ~42 GB).
-1. **Break the 5s OOM ceiling (832×480, 121f):** temporal VAE tiling (`tile_sample_min_num_frames`) + slicing, plus FP8 layerwise casting and group offload (`use_stream=True`) to free weight memory *for* the decode. **Honest read:** 832×480×121f sits right at the 94 GB cliff. Tiling+fp8 *might* hold full res but at seam/quality risk; **640×384 @ 121f or a downscaled 720p variant is the dependable 5-second answer.** Sequential offload alone won't fix it — it's a peak-allocation problem, not steady-state.
+1. **Break the 5s OOM ceiling (832×480, 121f): ✅ Measured here — it holds.** Temporal VAE tiling (`tile_sample_min_num_frames=16`) + FP8 layerwise casting + CPU offload renders the **full 832×480×121f (5.04s)** clip without OOM — **measured peak 68 GB alloc / 78 GB reserved, ~16 GB headroom** on the 94 GB card ([Tier A](#tier-a--measured-done)). The pre-experiment "640×384 is the dependable answer" hedge was **too conservative** — full res fits; 640×384 is the *faster* 5s option (81s vs 150s), not a memory necessity. **Measured surprise:** tiled-decode peak VRAM is set by the **temporal tile size + offload buffers, not spatial resolution** (both resolutions peak at the same ~68/78 GB) — so when VRAM-bound, shrink the tile, not the frame. Sequential offload alone won't fix it — it's a peak-allocation problem, not steady-state.
 2. **Speed:** **TeaCache** (~2x, official Hunyuan patch) and **SageAttention-FP8** (one line). **Prefer Sage over FA3-fp8** — FA3-fp8 went visibly blurry on Hunyuan in third-party tests.
 3. **Faster previews:** `taehv1_5` tiny-VAE decode (4-6x faster decode, 12-18x less VRAM) for draft passes; swap the full VAE back for finals.
 4. **Free orthogonal win:** T5 FP8. **Don't quantize the VAE** — fix decode OOM with tiling, not quantization (quantizing the decoder is where color shifts / blockiness show up).
@@ -70,7 +70,7 @@ Key traps: **8-bit is ~2x slower than 4-bit** for less benefit (use 4-bit NF4), 
 
 | Technique | LTX-2.3 | Wan 2.2 | Hunyuan 1.5 | What you get |
 |---|---|---|---|---|
-| Step + CFG distillation LoRA | ❌ already distilled | ✅ **the win** (8-step 4+4) | ❌ already distilled | ~5-10x fewer forward passes + CFG→1. **Dominant lever.** |
+| Step + CFG distillation | ❌ already distilled | ✅ **the win** — measured **5.8x** (Turbo swap, 8-step) | ❌ already distilled | ~5-10x fewer forward passes + CFG→1. **Dominant lever**, [confirmed](#tier-a--measured-done). |
 | TeaCache (standalone) | ⚠️ little to cache at 8 steps | ✅ ~2x (official patch) | ✅ ~2x (official patch) | Training-free, "no noticeable degradation," tune threshold 0.2-0.3. |
 | diffusers `enable_cache` (FBCache/FasterCache) | ⚠️ not wired | ⚠️ **errors on Wan 2.2 (#12012)** | ✅ has CacheConfig | ~1.5-2x; set `is_guidance_distilled=True` for distilled runs. |
 | SageAttention-FP8 (`set_attention_backend("sage")`) | ⚠️ source pipeline | ✅ (SM90/H100) | ✅ (SM90/H100) | ~1.1-1.3x end-to-end, near-zero quality hit. **Prefer over FA3-fp8.** |
@@ -101,11 +101,13 @@ The most valuable output of the scan — what *not* to spend a pod-hour on:
 
 De-duplicated across the three scans and ranked. Costs assume a community **H100 NVL at ~$2.59/hr** (the benchmark's rate); on owned hardware the dollar figures are effectively just power. Each experiment measures a **delta against the published [baseline](benchmarks/BENCHMARKS.md)**.
 
-### Tier A — highest value, do first (~2.5 GPU-hr, ~$6)
-| # | Experiment | Why | GPU-hr |
-|---|---|---|---|
-| A1 | **Wan step+CFG sweep:** 40 vs 20 vs 8(4+4) vs 4 steps with a Lightning LoRA, 5 fixed prompts, measure s/clip + eyeball motion | The dominant lever; expected ~53s → ~6-10s | ~1.0 |
-| A2 | **Hunyuan VAE-tiling + fp8 sweep** to render 5s @ 832×480 without OOM | Breaks a real limitation documented in our own runbook | ~1.5 |
+### Tier A — MEASURED (done)
+**Spent ≈ $2.65 / ~0.8 GPU-hr on a SECURE H100 NVL ($3.19/hr). Both landed — full numbers in [BENCHMARKS.md](benchmarks/BENCHMARKS.md#measured-results-tier-a).**
+
+| # | Experiment | Result (measured) |
+|---|---|---|
+| A1 | **Wan step+CFG distillation:** 40-step base vs Turbo transformer swap at 8 / 4 steps (guidance 1.0), 832×480×81f | ✅ **5.8x faster render** (46.6s → 8.0s) at identical 34 GB VRAM; 8-step (9.6s, 4.9x) recommended. Correction: lightx2v LoRAs are 14B-only — 5B needs the `yetter-ai/…Turbo` transformer swap, not a LoRA. |
+| A2 | **Hunyuan VAE-tiling + fp8** to render 5s @ 832×480 without OOM | ✅ **Full 832×480×121f (5.04s) fits** — 78 GB reserved, ~16 GB headroom; clip length doubled vs the baseline's 2.54s. Peak VRAM is tile-size-bound, not resolution-bound. |
 
 ### Tier B — strong, stackable, low-risk (~2.4 GPU-hr, ~$6)
 | # | Experiment | Why | GPU-hr |
@@ -148,4 +150,4 @@ The [baseline](benchmarks/BENCHMARKS.md) is deliberately the *default shipping r
 
 ## Status & contributing
 
-This is a **living note**, not a finished study. The baseline is single-run; the literature numbers are mostly for other DiTs until the experiments above replace them with measured ones. The most valuable contributions are **measured deltas on these exact three models** — if you run any of the experiments (or have your own numbers), open a PR adding a row to `benchmarks/results.jsonl` and a note here.
+This is a **living note**, not a finished study. The baseline is single-run; the literature numbers are mostly for other DiTs until the experiments above replace them with measured ones — **Tier A is now done** (Wan step-distillation + Hunyuan 5s tiling), Tiers B/C remain open. The most valuable contributions are **measured deltas on these exact three models** — if you run any of the experiments (or have your own numbers), open a PR adding a row to `benchmarks/results.jsonl` and a note here.
