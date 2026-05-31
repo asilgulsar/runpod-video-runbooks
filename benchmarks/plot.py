@@ -44,6 +44,7 @@ def derive(row):
     cost = row["cost_per_clip_usd"]
     mp_per_frame = (w * h) / 1_000_000.0
     d = dict(row)
+    d["label"] = row.get("label", row["model"])
     d["megapixels_per_frame"] = round(mp_per_frame, 3)
     d["compute_s_per_video_s"] = round(total_s / clip_s, 2)
     d["frames_per_compute_s"] = round(frames / total_s, 2)
@@ -54,7 +55,7 @@ def derive(row):
 
 def print_table(rows):
     cols = [
-        ("model", "Model", 17),
+        ("label", "Model", 20),
         ("steps", "Steps", 6),
         ("compute_s_per_video_s", "s_compute/s_video", 18),
         ("frames_per_compute_s", "frames/s", 9),
@@ -72,9 +73,9 @@ def print_table(rows):
     # Relative-to-fastest summary on the headline metric (pixel throughput).
     fastest = max(rows, key=lambda r: r["megapixels_per_s"])
     base = fastest["megapixels_per_s"]
-    print(f"Pixel throughput, relative to fastest ({fastest['model']} = 1.00x):")
+    print(f"Pixel throughput, relative to fastest ({fastest['label']} = 1.00x):")
     for r in sorted(rows, key=lambda r: -r["megapixels_per_s"]):
-        print(f"  {r['model']:<17} {r['megapixels_per_s'] / base:>5.2f}x")
+        print(f"  {r['label']:<20} {r['megapixels_per_s'] / base:>5.2f}x")
     print()
 
 
@@ -87,7 +88,7 @@ def write_charts(rows):
         print("matplotlib not installed; skipping charts. "
               "Install with: pip install matplotlib", file=sys.stderr)
         return
-    labels = [r["model"] for r in rows]
+    labels = [r["label"] for r in rows]
     specs = [
         ("megapixels_per_s", "Pixel throughput (MP/s, higher is better)", "throughput_mp_s.png"),
         ("usd_per_video_s", "Cost per second of video (USD, lower is better)", "cost_per_video_s.png"),
